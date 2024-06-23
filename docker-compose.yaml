@@ -1,0 +1,81 @@
+secrets:
+  db_user:
+    external: true
+  db_password:
+    external: true
+
+services:
+  keycloak-db:
+    image: postgres:16.2-alpine3.19
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --dbname=$$POSTGRES_DB --username=$$POSTGRES_USER"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: /run/secrets/db_user
+      POSTGRES_PASSWORD: /run/secrets/db_password
+    networks:
+      - keycloak-network
+    volumes:
+      - keycloak-data:/var/lib/postgresql/data
+    secrets:
+      - db_user
+      - db_password
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+
+  keycloak:
+    image: briccloak
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_DB: postgres
+      KC_DB_USERNAME: /run/secrets/db_user
+      KC_DB_PASSWORD: /run/secrets/db_password
+      KEYCLOAK_ADMIN: briccloak_admin
+      KEYCLOAK_ADMIN_PASSWORD: change-me-plz
+      KC_FEATURES_DISABLED: kerberos
+      KC_PROXY: edge
+      KC_HTTPS_CLIENT_AUTH: required
+#      KC_HOSTNAME: localhost
+      KC_HOSTNAME_STRICT: "false" # DO NOT run in production with this set...
+      KC_DB_URL_HOST: keycloak-db
+      KC_HTTPS_CERTIFICATE_FILE: /etc/x509/https/fullchain.pem
+      KC_HTTPS_CERTIFICATE_KEY_FILE: /etc/x509/https/privkey.pem
+      KC_HTTP-MAX-QUEUED-REQUESTS: 50
+    depends_on:
+      - keycloak-db
+    volumes:
+      - type: bind
+        source: ./certs/fullchain.pem
+        target: /etc/x509/https/fullchain.pem
+        read_only: true
+      - type: bind
+        source: ./certs/privkey.pem
+        target: /etc/x509/https/privkey.pem
+        read_only: true
+    networks:
+      - keycloak-network
+    ports:
+      - 8080:8080
+      - 8443:8443
+    secrets:
+      - db_user
+      - db_password
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+    command: start --db=postgres
+
+networks:
+  keycloak-network:
+    driver: overlay
+
+volumes:
+  keycloak-data:
